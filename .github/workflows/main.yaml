@@ -1,0 +1,72 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+name: Build pipeline
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.calculate-version.outputs.version-string }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with: 
+          go-version: '1.22'
+      - name: Configure version information
+        id: calculate-version
+        if: ${{ github.event_name == 'push' }}
+        uses: bitshifted/git-auto-semver@v2
+        with:
+          create_tag: true
+          initial_version: 0.2.0
+      - name: Setup environment variables
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          echo "VERSION=${{ steps.calculate-version.outputs.version-string }}" >> $GITHUB_ENV
+          echo "GIT_COMMIT_ID=$(echo $GITHUB_SHA)" >> $GITHUB_ENV
+      - name: Package
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          make package
+      - name: Upload content
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: content-data
+          path: content.tar.gz
+  # Create release
+  create-release:
+    if:  ${{ github.event_name == 'push' }}
+    needs: build-and-test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: content-data
+          path: content.tar.gz
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          tag_name: v${{ needs.build-and-test.outputs.version }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            content.tar.gz
